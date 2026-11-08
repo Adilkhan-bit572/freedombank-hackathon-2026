@@ -1,7 +1,8 @@
 """Evaluate a set of dialogues and write results.json in the hackathon format (schema 1.0).
 
-Works without the API server. Uses the active checklist from the database (the one edited
-in the UI), or the default checklist with --default-checklist.
+Works without the API server. Always uses the 8 standard criteria the results format requires
+(with the default definitions); --use-app-checklist takes the definitions, weights and comments
+of those 8 from the checklist edited in the app instead (for experiments).
 
     uv run python scripts/export_results.py --input src/hackathon_26_freedombank/data.json --out results/dev/results.json
     uv run python scripts/export_results.py --input prod.json --out results/prod/results.json --provider gemini
@@ -23,7 +24,8 @@ from hackathon_26_freedombank import config
 from hackathon_26_freedombank.db import engine, init_db
 from hackathon_26_freedombank.evaluation.results import build_results, validate_results
 from hackathon_26_freedombank.evaluation.service import EvaluationData, error_result, evaluate_conversation
-from hackathon_26_freedombank.evaluation.store import active_checklist, default_checklist
+from hackathon_26_freedombank.evaluation.criteria import STANDARD_IDS
+from hackathon_26_freedombank.evaluation.store import active_checklist, default_checklist, standard_criteria
 from hackathon_26_freedombank.llm import LLMError, get_llm_client
 
 
@@ -62,7 +64,9 @@ def load_previous(path: Path) -> dict[str, EvaluationData]:
 def evaluate_with_retry(record, criteria, rules, client_factory, retries: int, wait: float) -> EvaluationData:
     for attempt in range(retries + 1):
         try:
-            return evaluate_conversation(record.get("transcript") or [], criteria, rules, client_factory)
+            return evaluate_conversation(
+                record.get("transcript") or [], criteria, rules, client_factory, record.get("language")
+            )
         except LLMError as e:
             if e.retryable and attempt < retries:
                 print(f"    rate limited, waiting {wait:.0f}s ({attempt + 1}/{retries})", flush=True)
@@ -91,18 +95,22 @@ def main() -> None:
     p.add_argument("--retries", type=int, default=3, help="retries on rate limits")
     p.add_argument("--retry-wait", type=float, default=40.0)
     p.add_argument("--resume", action="store_true", help="keep ok results already in --out")
-    p.add_argument("--default-checklist", action="store_true", help="ignore the edited checklist in the DB")
+    p.add_argument("--use-app-checklist", action="store_true",
+                   help="take the 8 standard criteria's definitions/weights/comments from the app's checklist")
     p.add_argument("--limit", type=int, help="only the first N records (for a quick test)")
     args = p.parse_args()
 
     records = load_records(args.input)[: args.limit]
-    if args.default_checklist:
-        criteria, rules = default_checklist()
-    else:
+    criteria, rules = standard_criteria(), default_checklist()[1]
+    if args.use_app_checklist:
         init_db()
         with Session(engine) as s:
             checklist = active_checklist(s)
-            criteria, rules = checklist.criteria, checklist.general_rules
+        app = {c["id"]: {**c, "enabled": True} for c in checklist.criteria if c["id"] in STANDARD_IDS}
+        missing = [i for i in STANDARD_IDS if i not in app]
+        if missing:
+            sys.exit(f"The app's checklist lacks standard criteria: {', '.join(missing)}")
+        criteria, rules = [app[i] for i in STANDARD_IDS], checklist.general_rules
 
     client = None
 
