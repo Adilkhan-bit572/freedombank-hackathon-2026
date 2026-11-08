@@ -1,8 +1,5 @@
 {
-    "error": "",
-    "isSuccess": true,
     "data": {
-        "dataset_group_id": "DEV",
         "total_records": 65,
         "records": [
             {

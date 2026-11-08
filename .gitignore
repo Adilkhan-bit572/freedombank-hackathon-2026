@@ -2,7 +2,8 @@
 
 !.gitignore
 !.env.example
-!uv.lock
-!python-version
+!.python-version
 
 *.db
+
+*.pyc
