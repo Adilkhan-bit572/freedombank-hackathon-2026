@@ -1,0 +1,8 @@
+.*
+
+!.gitignore
+!.env.example
+!uv.lock
+!python-version
+
+*.db
